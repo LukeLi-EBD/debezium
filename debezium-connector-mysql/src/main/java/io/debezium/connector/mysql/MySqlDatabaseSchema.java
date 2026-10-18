@@ -98,7 +98,8 @@ public class MySqlDatabaseSchema extends HistorizedRelationalDatabaseSchema {
                         connectorConfig.customConverterRegistry(),
                         connectorConfig.getSourceInfoStructMaker().schema(),
                         connectorConfig.getSanitizeFieldNames(),
-                        false),
+                        false,
+                        connectorConfig.isTolerateMissingTrailingColumns()),
                 tableIdCaseInsensitive, connectorConfig.getKeyMapper());
 
         this.ddlParser = new MySqlAntlrDdlParser(

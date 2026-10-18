@@ -581,6 +581,18 @@ public abstract class RelationalDatabaseConnectorConfig extends CommonConnectorC
             .withDescription("Specify the constant that will be provided by Debezium to indicate that " +
                     "the original value is unavailable and not provided by the database.");
 
+    public static final Field TOLERATE_MISSING_TRAILING_COLUMNS = Field.create("tolerate.missing.trailing.columns")
+            .withDisplayName("Tolerate rows with missing trailing columns")
+            .withType(Type.BOOLEAN)
+            .withGroup(Field.createGroupEntry(Field.Group.CONNECTOR_ADVANCED, 21))
+            .withWidth(Width.SHORT)
+            .withDefault(false)
+            .withImportance(Importance.LOW)
+            .withDescription("When a data row predates a trailing 'ADD COLUMN' change (e.g. when replaying historical "
+                    + "binlog against the latest table schema), columns that fall beyond the end of the row are emitted as "
+                    + "null instead of failing the connector. Enable this only when all column additions happen at the end "
+                    + "of the table (no drop/rename/reorder); otherwise mismatched columns may be silently emitted as null.");
+
     protected static final ConfigDefinition CONFIG_DEFINITION = CommonConnectorConfig.CONFIG_DEFINITION.edit()
             .type(
                     SERVER_NAME)
@@ -612,6 +624,7 @@ public abstract class RelationalDatabaseConnectorConfig extends CommonConnectorC
                     PROPAGATE_COLUMN_SOURCE_TYPE,
                     PROPAGATE_DATATYPE_SOURCE_TYPE,
                     SNAPSHOT_FULL_COLUMN_SCAN_FORCE,
+                    TOLERATE_MISSING_TRAILING_COLUMNS,
                     DatabaseHeartbeatImpl.HEARTBEAT_ACTION_QUERY)
             .create();
 
@@ -660,6 +673,15 @@ public abstract class RelationalDatabaseConnectorConfig extends CommonConnectorC
 
     public RelationalTableFilters getTableFilters() {
         return tableFilters;
+    }
+
+    /**
+     * Returns whether rows that predate a trailing column addition should be tolerated,
+     * i.e. columns beyond the end of such a row are emitted as null instead of failing
+     * the connector. Defaults to {@code false}, keeping the original behavior.
+     */
+    public boolean isTolerateMissingTrailingColumns() {
+        return getConfig().getBoolean(TOLERATE_MISSING_TRAILING_COLUMNS);
     }
 
     /**

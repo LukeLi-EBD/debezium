@@ -62,6 +62,7 @@ public class TableSchemaBuilder {
     private final FieldNamer<Column> fieldNamer;
     private final CustomConverterRegistry customConverterRegistry;
     private final boolean multiPartitionMode;
+    private final boolean tolerateMissingTrailingColumns;
 
     /**
      * Create a new instance of the builder.
@@ -94,6 +95,25 @@ public class TableSchemaBuilder {
                               CustomConverterRegistry customConverterRegistry,
                               Schema sourceInfoSchema,
                               boolean sanitizeFieldNames, boolean multiPartitionMode) {
+        this(valueConverterProvider, defaultValueConverter, schemaNameAdjuster, customConverterRegistry,
+                sourceInfoSchema, sanitizeFieldNames, multiPartitionMode, false);
+    }
+
+    /**
+     * Create a new instance of the builder.
+     *
+     * @param tolerateMissingTrailingColumns whether rows that predate a trailing {@code ADD COLUMN}
+     *            change should be tolerated: columns beyond the end of such a row are emitted as null
+     *            instead of failing the connector. When {@code false}, the original behavior is kept
+     *            and a mismatch between the row width and the current schema fails the connector.
+     */
+    public TableSchemaBuilder(ValueConverterProvider valueConverterProvider,
+                              DefaultValueConverter defaultValueConverter,
+                              SchemaNameAdjuster schemaNameAdjuster,
+                              CustomConverterRegistry customConverterRegistry,
+                              Schema sourceInfoSchema,
+                              boolean sanitizeFieldNames, boolean multiPartitionMode,
+                              boolean tolerateMissingTrailingColumns) {
         this.schemaNameAdjuster = schemaNameAdjuster;
         this.valueConverterProvider = valueConverterProvider;
         this.defaultValueConverter = Optional.ofNullable(defaultValueConverter)
@@ -102,6 +122,7 @@ public class TableSchemaBuilder {
         this.fieldNamer = FieldNameSelector.defaultSelector(sanitizeFieldNames);
         this.customConverterRegistry = customConverterRegistry;
         this.multiPartitionMode = multiPartitionMode;
+        this.tolerateMissingTrailingColumns = tolerateMissingTrailingColumns;
     }
 
     /**
@@ -214,7 +235,11 @@ public class TableSchemaBuilder {
                 Struct result = new Struct(schema);
                 for (int i = 0; i != numFields; ++i) {
                     validateIncomingRowToInternalMetadata(recordIndexes, fields, converters, row, i);
-                    Object value = row[recordIndexes[i]];
+                    // Rows predating a trailing column addition: missing tail columns become null
+                    // only when tolerance is enabled; otherwise the original array access is kept.
+                    Object value = tolerateMissingTrailingColumns && recordIndexes[i] >= row.length
+                            ? null
+                            : row[recordIndexes[i]];
                     ValueConverter converter = converters[i];
                     if (converter != null) {
                         // A component of primary key must be not-null.
@@ -250,8 +275,16 @@ public class TableSchemaBuilder {
             throw new ConnectException("Too few schema fields, internal schema representation is probably out of sync with real database schema");
         }
         if (recordIndexes[position] >= row.length) {
-            LOGGER.error("Error requesting a row value, row: {}, requested index: {} at position {}", row.length, recordIndexes[position], position);
-            throw new ConnectException("Data row is smaller than a column index, internal schema representation is probably out of sync with real database schema");
+            if (!tolerateMissingTrailingColumns) {
+                LOGGER.error("Error requesting a row value, row: {}, requested index: {} at position {}", row.length, recordIndexes[position], position);
+                throw new ConnectException("Data row is smaller than a column index, internal schema representation is probably out of sync with real database schema");
+            }
+            // The row predates a trailing "ADD COLUMN" of the newest table schema (e.g. replaying
+            // historical binlog against the latest schema). Tolerate this Canal-style: the caller
+            // will fall back to null for the missing trailing column instead of failing the connector.
+            LOGGER.warn("Row has {} columns but column index {} is required at position {}; "
+                    + "the row predates a trailing column addition, null will be used",
+                    row.length, recordIndexes[position], position);
         }
     }
 
@@ -281,7 +314,11 @@ public class TableSchemaBuilder {
                 Struct result = new Struct(schema);
                 for (int i = 0; i != numFields; ++i) {
                     validateIncomingRowToInternalMetadata(recordIndexes, fields, converters, row, i);
-                    Object value = row[recordIndexes[i]];
+                    // Rows predating a trailing column addition: missing tail columns become null
+                    // only when tolerance is enabled; otherwise the original array access is kept.
+                    Object value = tolerateMissingTrailingColumns && recordIndexes[i] >= row.length
+                            ? null
+                            : row[recordIndexes[i]];
 
                     ValueConverter converter = converters[i];
 
